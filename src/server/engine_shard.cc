@@ -1294,4 +1294,12 @@ EngineShard::CompactTableStats EngineShard::CompactTable(double threshold, DbInd
   return stats;
 }
 
+void EngineShard::AddTypeMemDelta(size_t type, int64_t delta) {
+  if (delta == 0)
+    return;
+
+  DCHECK_LT(type, type_mem_delta_.size());
+  type_mem_delta_[type] += delta;
+}
+
 }  // namespace dfly

@@ -4,11 +4,14 @@
 
 #pragma once
 
+#include <array>
+
 #include "core/intent_lock.h"
 #include "core/mi_memory_resource.h"
 #include "core/page_usage/page_usage_stats.h"
 #include "core/task_queue.h"
 #include "core/tx_queue.h"
+#include "redis/redis_aux.h"
 #include "server/common_types.h"
 #include "util/sliding_counter.h"
 
@@ -19,6 +22,8 @@ namespace dfly {
 class EngineShardSet;
 class TieredStorage;
 class ShardDocIndices;
+
+using TypeMemDeltas = std::array<int64_t, OBJ_TYPE_MAX>;
 
 class EngineShard {
   friend class EngineShardSet;
@@ -246,6 +251,12 @@ class EngineShard {
   // Merge underutilized buddy-segment pairs in the dash table.
   CompactTableStats CompactTable(double threshold, DbIndex db_idx);
 
+  void AddTypeMemDelta(size_t type, int64_t delta);
+
+  const TypeMemDeltas& type_mem_delta() const {
+    return type_mem_delta_;
+  }
+
  private:
   struct DefragTaskState {
     size_t dbid = 0u;
@@ -368,6 +379,8 @@ class EngineShard {
   using Counter = util::SlidingCounter<7>;
 
   Counter counter_[COUNTER_TOTAL];
+
+  TypeMemDeltas type_mem_delta_ = {};
 
   static __thread EngineShard* shard_;
 };
