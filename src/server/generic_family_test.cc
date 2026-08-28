@@ -46,6 +46,30 @@ TEST_F(GenericFamilyTest, TtlOfExpiredKeyDuringPause) {
   Run({"client", "unpause"});
 }
 
+TEST_F(GenericFamilyTest, ExpireFlagsAreAnded) {
+  // Every given flag must hold; one passing flag must not override another that fails.
+  Run({"set", "foo", "bar", "ex", "50"});
+  EXPECT_THAT(Run({"expire", "foo", "100", "XX", "LT"}), IntArg(0));
+  EXPECT_THAT(Run({"ttl", "foo"}), IntArg(50));
+
+  Run({"set", "foo", "bar", "ex", "200"});
+  EXPECT_THAT(Run({"expire", "foo", "100", "XX", "GT"}), IntArg(0));
+  EXPECT_THAT(Run({"ttl", "foo"}), IntArg(200));
+
+  Run({"set", "foo", "bar"});
+  EXPECT_THAT(Run({"expire", "foo", "200", "LT", "XX"}), IntArg(0));
+  EXPECT_THAT(Run({"ttl", "foo"}), IntArg(-1));
+
+  Run({"set", "foo", "bar", "ex", "50"});
+  EXPECT_THAT(Run({"expire", "foo", "100", "XX", "GT"}), IntArg(1));
+  EXPECT_THAT(Run({"ttl", "foo"}), IntArg(100));
+
+  const char* kNxErr = "NX and XX, GT or LT options at the same time are not compatible";
+  EXPECT_THAT(Run({"expire", "foo", "10", "NX", "GT"}), ErrArg(kNxErr));
+  EXPECT_THAT(Run({"expire", "foo", "10", "NX", "LT"}), ErrArg(kNxErr));
+  EXPECT_THAT(Run({"expire", "foo", "10", "NX", "XX"}), ErrArg(kNxErr));
+}
+
 TEST_F(GenericFamilyTest, Expire) {
   Run({"set", "key", "val"});
 
@@ -160,7 +184,7 @@ TEST_F(GenericFamilyTest, ExpireOptions) {
   // NX and XX are mutually exclusive
   Run({"set", "key", "val"});
   auto resp = Run({"expire", "key", "3600", "NX", "XX"});
-  ASSERT_THAT(resp, ErrArg("NX and XX options at the same time are not compatible"));
+  ASSERT_THAT(resp, ErrArg("NX and XX, GT or LT options at the same time are not compatible"));
 
   // GT and LT are mutually exclusive
   resp = Run({"expire", "key", "3600", "GT", "LT"});
@@ -239,17 +263,6 @@ TEST_F(GenericFamilyTest, ExpireOptions) {
   EXPECT_THAT(resp, IntArg(0));
   resp = Run({"ttl", "key"});
   EXPECT_THAT(resp.GetInt(), 101);
-
-  // NX with GT, first sets expiry, updates only to larger values
-  Run({"persist", "key"});
-  Run({"expire", "key", "5", "NX", "GT"});
-  EXPECT_THAT(Run({"ttl", "key"}), IntArg(5));
-
-  Run({"expire", "key", "3", "NX", "GT"});
-  EXPECT_THAT(Run({"ttl", "key"}), IntArg(5));
-
-  Run({"expire", "key", "7", "NX", "GT"});
-  EXPECT_THAT(Run({"ttl", "key"}), IntArg(7));
 }
 
 TEST_F(GenericFamilyTest, ExpireAtOptions) {
@@ -260,7 +273,7 @@ TEST_F(GenericFamilyTest, ExpireAtOptions) {
   Run({"set", "key", "val"});
   // NX and XX are mutually exclusive
   auto resp = Run({"expireat", "key", "3600", "NX", "XX"});
-  ASSERT_THAT(resp, ErrArg("NX and XX options at the same time are not compatible"));
+  ASSERT_THAT(resp, ErrArg("NX and XX, GT or LT options at the same time are not compatible"));
 
   // GT and LT are mutually exclusive
   resp = Run({"expireat", "key", "3600", "GT", "LT"});
@@ -325,7 +338,7 @@ TEST_F(GenericFamilyTest, PExpireOptions) {
   // NX and XX are mutually exclusive
   Run({"set", "key", "val"});
   auto resp = Run({"pexpire", "key", "3600", "NX", "XX"});
-  ASSERT_THAT(resp, ErrArg("NX and XX options at the same time are not compatible"));
+  ASSERT_THAT(resp, ErrArg("NX and XX, GT or LT options at the same time are not compatible"));
 
   // GT and LT are mutually exclusive
   resp = Run({"pexpire", "key", "3600", "GT", "LT"});
@@ -389,7 +402,7 @@ TEST_F(GenericFamilyTest, PExpireAtOptions) {
   Run({"set", "key", "val"});
   // NX and XX are mutually exclusive
   auto resp = Run({"pexpireat", "key", "3600", "NX", "XX"});
-  ASSERT_THAT(resp, ErrArg("NX and XX options at the same time are not compatible"));
+  ASSERT_THAT(resp, ErrArg("NX and XX, GT or LT options at the same time are not compatible"));
 
   // GT and LT are mutually exclusive
   resp = Run({"pexpireat", "key", "3600", "GT", "LT"});
