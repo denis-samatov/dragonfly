@@ -69,7 +69,9 @@ class TestAggregate:
     variants: set[str] = field(default_factory=set)
     groups: set[str] = field(default_factory=set)
     dates: set[str] = field(default_factory=set)
-    segments: dict[tuple[str, str, str], dict[str, Any]] = field(default_factory=dict)
+    segments: dict[tuple[str, str, str, str, str, str], dict[str, Any]] = field(
+        default_factory=dict
+    )
     recent: list[dict[str, str]] = field(default_factory=list)
     failure_examples: list[dict[str, str]] = field(default_factory=list)
 
@@ -175,12 +177,15 @@ class TestAggregate:
         }
 
     def add_segment(self, meta: Metadata, status: str, timestamp: str, duration: float) -> None:
-        key = (meta.date, meta.workflow, meta.variant)
+        key = (meta.date, meta.workflow, meta.run_id, meta.attempt, meta.job, meta.variant)
         segment = self.segments.get(key)
         if segment is None:
             segment = {
                 "date": meta.date,
                 "workflow": meta.workflow,
+                "run_id": meta.run_id,
+                "run_attempt": meta.attempt,
+                "job": meta.job,
                 "variant": meta.variant,
                 "total": 0,
                 "passed": 0,
@@ -230,7 +235,14 @@ class TestAggregate:
         rows = []
         for segment in sorted(
             self.segments.values(),
-            key=lambda item: (item["date"], item["workflow"], item["variant"]),
+            key=lambda item: (
+                item["date"],
+                item["workflow"],
+                item["run_id"],
+                item["run_attempt"],
+                item["job"],
+                item["variant"],
+            ),
         ):
             row = dict(segment)
             row["total_time"] = round(row["total_time"], 4)
