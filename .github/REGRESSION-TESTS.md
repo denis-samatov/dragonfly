@@ -96,7 +96,11 @@ other family from running.
 - `gtest-suites`: Comma- or space-separated target names discovered under
   `src/core`, `src/facade`, and `src/server`. You may also provide a target path or
   `.cc` suffix; only the target name is used. Leave it empty to run every discovered
-  target once.
+  target once. Avoid leaving it empty when `gtest-cases` is intended for tests in
+  only one or a few binaries: the workflow first builds every discovered target and
+  then evaluates the filter against each one. Specify the relevant target names
+  instead. Empty `gtest-suites` remains supported; targets with no matching filtered
+  tests are skipped.
 - `gtest-cases`: A value passed directly to GoogleTest as `--gtest_filter`. Leave it
   empty to run all cases in the selected targets, or all cases in every target when
   `gtest-suites` is also empty.

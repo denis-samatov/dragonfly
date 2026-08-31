@@ -324,10 +324,12 @@ RunGtests() {
       gtest_output_file=$(mktemp)
       "${gtest_command[@]}" >"${gtest_output_file}" 2>&1 || code=$?
       cat "${gtest_output_file}"
-      if [[ "${code}" -eq 0 ]] && \
-        grep -Eq 'filter ".*" did not match any test; no tests were run' "${gtest_output_file}"; then
-        echo "GoogleTest filter matched no tests: ${GTEST_CASES_INPUT}"
-        code=1
+      if [[ -n "${GTEST_CASES_INPUT}" ]] && \
+        (grep -Eq 'filter ".*" did not match any test; no tests were run' "${gtest_output_file}" || \
+         grep -Eq '\[ *PASSED *\] 0 tests\.' "${gtest_output_file}"); then
+        echo "Skipping ${suite}: GoogleTest filter matched no tests: ${GTEST_CASES_INPUT}"
+        rm -f "${gtest_output_file}"
+        continue
       fi
       rm -f "${gtest_output_file}"
       if [[ "${code}" -eq 124 ]]; then
