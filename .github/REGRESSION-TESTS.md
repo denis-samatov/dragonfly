@@ -131,6 +131,9 @@ StringMapTest.*:DashTest.*
   and includes checkout, input validation, Dragonfly build, test setup, Pytest, and
   GoogleTest. The helpers also share a deadline started before the build, so time
   used by the build or one test family reduces the time available to the other.
+  If the budget is too short, the job may stop during the build or before the first
+  test iteration starts. The main build is not forcibly stopped by this shared
+  deadline; the GitHub job timeout still applies to it.
   Manual runs default to `360` minutes (6 hours); scheduled runs retain an 80-minute
   shared job budget. A runner cannot exceed GitHub Actions' six-hour job limit. The
   budget stops the active build or test command immediately when it expires; it does
