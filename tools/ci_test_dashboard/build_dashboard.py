@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
-"""Build compact dashboard JSON from downloaded JUnit XML."""
+"""Build static dashboard JSON from downloaded JUnit XML and compact test JSON."""
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
+import shutil
 import sys
 import xml.etree.ElementTree as ET
 from collections import Counter
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +20,12 @@ FAIL_STATUSES = {"failed", "error"}
 RECENT_LIMIT = 12
 EXAMPLE_LIMIT = 4
 SET_LIMIT = 8
+RANGE_OPTIONS = [
+    ("all", "All history", None),
+    ("7", "Last 7 days", 7),
+    ("14", "Last 14 days", 14),
+    ("30", "Last 30 days", 30),
+]
 
 
 @dataclass
@@ -253,7 +261,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "input_dir", type=Path, help="Root containing downloaded JUnit XML and dashboard JSON"
     )
-    parser.add_argument("output_json", type=Path, help="Where to write summary JSON")
+    parser.add_argument("output_json", type=Path, help="Where to write dashboard JSON files")
     parser.add_argument(
         "--limit",
         type=int,
@@ -346,8 +354,342 @@ def main() -> int:
 
         reports_by_status["failed" if report_has_failure else "passed"] += 1
 
-    test_rows = [aggregate.to_json() for aggregate in tests.values()]
-    test_rows.sort(
+    test_rows = []
+    for aggregate in tests.values():
+        row = aggregate.to_json()
+        row["detail_file"] = detail_file_for(row["id"])
+        test_rows.append(row)
+
+    sort_rows(test_rows)
+    generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    output_dir = prepare_output_dir(output_json)
+
+    for row in test_rows:
+        write_json(
+            output_dir / row["detail_file"],
+            {
+                "schema_version": 2,
+                "generated_at": generated_at,
+                "id": row["id"],
+                "segments": row["segments"],
+                "recent": row["recent"],
+                "failure_examples": row["failure_examples"],
+            },
+        )
+
+    input_counts = {
+        "xml_files": len(xml_files),
+        "dashboard_json_files": len(dashboard_json_files),
+        "reports_passed": reports_by_status["passed"],
+        "reports_failed": reports_by_status["failed"],
+        "parse_errors": len(parse_errors),
+    }
+
+    ranges = []
+    for range_id, label, days in RANGE_OPTIONS:
+        range_summary = build_range_summary(
+            test_rows=test_rows,
+            range_id=range_id,
+            label=label,
+            days=days,
+            latest_day=max(dates) if dates else None,
+            generated_at=generated_at,
+            input_dir=input_dir,
+            input_counts=input_counts,
+            parse_errors=parse_errors,
+        )
+        range_file = f"ranges/{range_id}.json"
+        write_json(output_dir / range_file, range_summary)
+        ranges.append(
+            {
+                "id": range_id,
+                "label": label,
+                "file": range_file,
+                "tests": range_summary["totals"]["unique_tests"],
+                "date_range": range_summary["date_range"],
+            }
+        )
+
+    all_range = next(item for item in ranges if item["id"] == "all")
+    default_range = "30" if any(item["id"] == "30" for item in ranges) else all_range["id"]
+    manifest = {
+        "schema_version": 2,
+        "generated_at": generated_at,
+        "input_dir": str(input_dir),
+        "date_range": {
+            "first": min(dates) if dates else None,
+            "last": max(dates) if dates else None,
+            "days": sorted(dates),
+        },
+        "default_range": default_range,
+        "ranges": ranges,
+        "totals": {
+            **input_counts,
+            "runs": len(run_keys),
+            "unique_tests": len(test_rows),
+            "test_occurrences": sum(tests_by_status.values()),
+        },
+        "parse_errors": parse_errors[:100],
+    }
+    write_json(output_dir / "manifest.json", manifest)
+
+    print(f"Wrote dashboard data under {output_dir}")
+    print(
+        "Parsed "
+        f"{len(xml_files)} XML files and {len(dashboard_json_files)} dashboard JSON files, "
+        f"{sum(tests_by_status.values())} occurrences, "
+        f"{len(test_rows)} unique tests."
+    )
+    return 0
+
+
+def prepare_output_dir(output_path: Path) -> Path:
+    output_dir = output_path.parent if output_path.suffix else output_path
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    for name in ("ranges", "tests"):
+        shutil.rmtree(output_dir / name, ignore_errors=True)
+        (output_dir / name).mkdir(parents=True, exist_ok=True)
+
+    stale_summary = output_dir / "summary.json"
+    if stale_summary.is_file():
+        stale_summary.unlink()
+
+    return output_dir
+
+
+def write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+
+
+def detail_file_for(test_id: str) -> str:
+    digest = hashlib.sha256(test_id.encode("utf-8")).hexdigest()[:20]
+    return f"tests/{digest}.json"
+
+
+def build_range_summary(
+    test_rows: list[dict[str, Any]],
+    range_id: str,
+    label: str,
+    days: int | None,
+    latest_day: str | None,
+    generated_at: str,
+    input_dir: Path,
+    input_counts: dict[str, int],
+    parse_errors: list[dict[str, str]],
+) -> dict[str, Any]:
+    rows = []
+    for row in test_rows:
+        segments = segments_for_range(row["segments"], latest_day, days)
+        summary_row = summary_row_for_segments(row, segments)
+        if summary_row:
+            rows.append(summary_row)
+
+    sort_rows(rows)
+    facets = facets_for(rows)
+
+    return {
+        "schema_version": 2,
+        "generated_at": generated_at,
+        "input_dir": str(input_dir),
+        "range": {
+            "id": range_id,
+            "label": label,
+            "days": days,
+        },
+        "date_range": {
+            "first": min(facets["dates"]) if facets["dates"] else None,
+            "last": max(facets["dates"]) if facets["dates"] else None,
+            "days": facets["dates"],
+        },
+        "totals": totals_for(rows, input_counts),
+        "breakdowns": breakdowns_for(rows),
+        "facets": facets,
+        "tests": rows,
+        "parse_errors": parse_errors[:100],
+    }
+
+
+def segments_for_range(
+    segments: list[dict[str, Any]], latest_day: str | None, days: int | None
+) -> list[dict[str, Any]]:
+    if days is None or latest_day is None:
+        return segments
+
+    try:
+        latest = datetime.strptime(latest_day, "%Y-%m-%d").date()
+    except ValueError:
+        return segments
+
+    cutoff = (latest - timedelta(days=days - 1)).isoformat()
+    return [segment for segment in segments if cutoff <= segment.get("date", "") <= latest_day]
+
+
+def summary_row_for_segments(
+    row: dict[str, Any], segments: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    if not segments:
+        return None
+
+    total = sum_int(segments, "total")
+    passed = sum_int(segments, "passed")
+    failed = sum_int(segments, "failed")
+    errored = sum_int(segments, "errored")
+    skipped = sum_int(segments, "skipped")
+    total_time = sum_float(segments, "total_time")
+    failures = failed + errored
+    actionable = passed + failed + errored
+    failure_rate = failures / actionable if actionable else 0.0
+    last_segment = max(segments, key=lambda item: item.get("last_seen") or "")
+    failed_segments = [segment for segment in segments if segment.get("last_failed")]
+    last_failed_segment = (
+        max(failed_segments, key=lambda item: item.get("last_failed") or "")
+        if failed_segments
+        else None
+    )
+    recent = recent_from_segments(segments)
+    active_dates = unique_sorted(segment.get("date") for segment in segments)
+    active_workflows = unique_sorted(segment.get("workflow") for segment in segments)
+    active_variants = unique_sorted(segment.get("variant") for segment in segments)
+
+    return {
+        "id": row["id"],
+        "detail_file": row["detail_file"],
+        "suite": row["suite"],
+        "level": row["level"],
+        "classname": row["classname"],
+        "name": row["name"],
+        "display_name": row["display_name"],
+        "total": total,
+        "passed": passed,
+        "failed": failed,
+        "errored": errored,
+        "skipped": skipped,
+        "failures": failures,
+        "failure_rate": round(failure_rate, 4),
+        "avg_time": round(total_time / total, 4) if total else 0.0,
+        "first_seen": min_present(segment.get("first_seen") for segment in segments),
+        "last_seen": last_segment.get("last_seen"),
+        "last_failed": last_failed_segment.get("last_failed") if last_failed_segment else None,
+        "last_failed_run_id": (
+            last_failed_segment.get("last_failed_run_id", "") if last_failed_segment else ""
+        ),
+        "last_failed_run_attempt": (
+            last_failed_segment.get("last_failed_run_attempt", "") if last_failed_segment else ""
+        ),
+        "last_failed_report": (
+            last_failed_segment.get("last_failed_report", "") if last_failed_segment else ""
+        ),
+        "last_status": last_segment.get("last_status", "unknown"),
+        "last_workflow": last_segment.get("workflow", ""),
+        "last_run_id": last_segment.get("last_run_id", ""),
+        "last_variant": last_segment.get("variant", ""),
+        "last_report": last_segment.get("last_report", ""),
+        "workflows": sorted_limited(set(active_workflows)),
+        "variants": sorted_limited(set(active_variants)),
+        "groups": row.get("groups", []),
+        "filters": {
+            "dates": active_dates,
+            "workflows": active_workflows,
+            "variants": active_variants,
+        },
+        "active_dates": active_dates,
+        "active_workflows": active_workflows,
+        "active_variants": active_variants,
+        "is_currently_failing": last_segment.get("last_status") in FAIL_STATUSES,
+        "is_flaky": failures > 0 and passed > 0,
+        "started_failing_in_sample": started_failing_in_sample(recent),
+    }
+
+
+def sum_int(rows: list[dict[str, Any]], key: str) -> int:
+    return sum(int(row.get(key) or 0) for row in rows)
+
+
+def sum_float(rows: list[dict[str, Any]], key: str) -> float:
+    return sum(float(row.get(key) or 0) for row in rows)
+
+
+def min_present(values: Any) -> str | None:
+    present = [value for value in values if value]
+    return min(present) if present else None
+
+
+def recent_from_segments(segments: list[dict[str, Any]]) -> list[dict[str, str]]:
+    recent = [
+        {
+            "status": str(segment.get("last_status", "unknown")),
+            "time": str(segment.get("last_seen", "")),
+        }
+        for segment in segments
+        if segment.get("last_seen")
+    ]
+    recent.sort(key=lambda item: item["time"])
+    return recent[-RECENT_LIMIT:]
+
+
+def totals_for(rows: list[dict[str, Any]], input_counts: dict[str, int]) -> dict[str, int]:
+    return {
+        **input_counts,
+        "unique_tests": len(rows),
+        "test_occurrences": sum(row["total"] for row in rows),
+        "passed": sum(row["passed"] for row in rows),
+        "failed": sum(row["failed"] for row in rows),
+        "errored": sum(row["errored"] for row in rows),
+        "skipped": sum(row["skipped"] for row in rows),
+        "currently_failing": sum(1 for row in rows if row["is_currently_failing"]),
+        "flaky": sum(1 for row in rows if row["is_flaky"]),
+        "started_failing_in_sample": sum(1 for row in rows if row["started_failing_in_sample"]),
+    }
+
+
+def breakdowns_for(rows: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    by_suite: Counter[str] = Counter()
+    by_level: Counter[str] = Counter()
+    by_workflow: Counter[str] = Counter()
+    by_variant: Counter[str] = Counter()
+    tests_by_status: Counter[str] = Counter()
+
+    for row in rows:
+        by_suite[row["suite"]] += 1
+        by_level[row["level"]] += 1
+        tests_by_status[row["last_status"]] += 1
+        by_workflow.update(row.get("active_workflows", []))
+        by_variant.update(row.get("active_variants", []))
+
+    return {
+        "by_suite": dict(sorted(by_suite.items())),
+        "by_level": dict(sorted(by_level.items())),
+        "by_workflow": dict(sorted(by_workflow.items())),
+        "by_variant": dict(sorted(by_variant.items())),
+        "tests_by_status": dict(sorted(tests_by_status.items())),
+    }
+
+
+def facets_for(rows: list[dict[str, Any]]) -> dict[str, list[str]]:
+    dates: set[str] = set()
+    workflows: set[str] = set()
+    variants: set[str] = set()
+
+    for row in rows:
+        dates.update(row.get("active_dates", []))
+        workflows.update(row.get("active_workflows", []))
+        variants.update(row.get("active_variants", []))
+
+    return {
+        "dates": sorted(dates),
+        "workflows": sorted(workflows),
+        "variants": sorted(variants),
+    }
+
+
+def unique_sorted(values: Any) -> list[str]:
+    return sorted({str(value) for value in values if value})
+
+
+def sort_rows(rows: list[dict[str, Any]]) -> None:
+    rows.sort(
         key=lambda item: (
             item["failures"],
             item["failure_rate"],
@@ -356,61 +698,6 @@ def main() -> int:
         ),
         reverse=True,
     )
-
-    generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-    summary = {
-        "generated_at": generated_at,
-        "input_dir": str(input_dir),
-        "date_range": {
-            "first": min(dates) if dates else None,
-            "last": max(dates) if dates else None,
-            "days": sorted(dates),
-        },
-        "totals": {
-            "xml_files": len(xml_files),
-            "dashboard_json_files": len(dashboard_json_files),
-            "runs": len(run_keys),
-            "unique_tests": len(test_rows),
-            "test_occurrences": sum(tests_by_status.values()),
-            "reports_passed": reports_by_status["passed"],
-            "reports_failed": reports_by_status["failed"],
-            "parse_errors": len(parse_errors),
-            "passed": tests_by_status["passed"],
-            "failed": tests_by_status["failed"],
-            "errored": tests_by_status["error"],
-            "skipped": tests_by_status["skipped"],
-            "currently_failing": sum(1 for row in test_rows if row["is_currently_failing"]),
-            "flaky": sum(1 for row in test_rows if row["is_flaky"]),
-            "started_failing_in_sample": sum(
-                1 for row in test_rows if row["started_failing_in_sample"]
-            ),
-        },
-        "breakdowns": {
-            "by_suite": dict(sorted(by_suite.items())),
-            "by_level": dict(sorted(by_level.items())),
-            "by_workflow": dict(sorted(by_workflow.items())),
-            "by_variant": dict(sorted(by_variant.items())),
-            "tests_by_status": dict(sorted(tests_by_status.items())),
-        },
-        "facets": {
-            "dates": sorted(dates),
-            "workflows": sorted(by_workflow),
-            "variants": sorted(by_variant),
-        },
-        "tests": test_rows,
-        "parse_errors": parse_errors[:100],
-    }
-
-    output_json.parent.mkdir(parents=True, exist_ok=True)
-    output_json.write_text(json.dumps(summary, separators=(",", ":")), encoding="utf-8")
-    print(f"Wrote {output_json}")
-    print(
-        "Parsed "
-        f"{len(xml_files)} XML files and {len(dashboard_json_files)} dashboard JSON files, "
-        f"{summary['totals']['test_occurrences']} occurrences, "
-        f"{summary['totals']['unique_tests']} unique tests."
-    )
-    return 0
 
 
 def add_report_metadata(
