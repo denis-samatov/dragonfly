@@ -7,41 +7,41 @@ on:
     inputs:
       # Pytest inputs.
       test-suites:
-        description: "Pytest: optional filenames; empty runs all Pytest suites once. See .github/REGRESSION-TESTS.md. Example: connection_test,eval_test"
+        description: "Pytest: optional filenames; empty runs all Pytest suites. See .github/REGRESSION-TESTS.md. Example: connection_test,eval_test"
         required: false
         default: ""
         type: string
       test-cases:
-        description: "Pytest: optional node ID regex; see .github/REGRESSION-TESTS.md. Example: test_golang_asynq_script|test_shared_read_buffer_overflow_copy_metric"
+        description: "Pytest: optional node ID regex; See .github/REGRESSION-TESTS.md. Example: test_golang_asynq_script|test_shared_read_buffer_overflow_copy_metric"
         required: false
         default: ""
         type: string
       iterations:
-        description: "Pytest: optional run count; run count or Common time budget, whichever finishes first. See .github/REGRESSION-TESTS.md. Default: 1. Example: 12"
+        description: "Pytest: optional number of iterations; See .github/REGRESSION-TESTS.md. Default: 1. Example: 12"
         required: false
         default: "1"
         type: string
 
       # GoogleTest inputs.
       gtest-suites:
-        description: "GoogleTest: manual runs only; optional targets, empty runs every target once. See .github/REGRESSION-TESTS.md. Example: dfly_core_test,redis_parser_test"
+        description: "GoogleTest: manual runs only; optional targets, empty runs every target. See .github/REGRESSION-TESTS.md. Example: dfly_core_test,redis_parser_test"
         required: false
         default: ""
         type: string
       gtest-cases:
-        description: "GoogleTest: optional --gtest_filter; see .github/REGRESSION-TESTS.md. Example: StringMapTest.*:DashTest.*"
+        description: "GoogleTest: optional --gtest_filter; See .github/REGRESSION-TESTS.md. Example: StringMapTest.*:DashTest.*"
         required: false
         default: ""
         type: string
       gtest-iterations:
-        description: "GoogleTest: optional run count; run count or Common time budget, whichever finishes first. See .github/REGRESSION-TESTS.md. Default: 1. Example: 12"
+        description: "GoogleTest: optional number of iterations. See .github/REGRESSION-TESTS.md. Default: 1. Example: 12"
         required: false
         default: "1"
         type: string
 
       # Common inputs.
       max-run-time:
-        description: "Common: optional total job budget for build, Pytest, and GoogleTest; stops an active command when reached. See .github/REGRESSION-TESTS.md. Default: 360 min (6 hours)"
+        description: "Common: combined time limit (minutes) for the build/Pytest/GoogleTest runs; Default: 360"
         required: false
         default: "360"
         type: string
