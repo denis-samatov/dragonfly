@@ -13,6 +13,8 @@ The following names match the `workflow_dispatch` fields in the YAML exactly.
 
 ## Pytest Inputs
 
+- Pytest runs in every scheduled and manually dispatched regression job. With every
+  Pytest input at its default, it runs the full `tests/dragonfly` suite once.
 - `test-suites`: Comma- or space-separated Python test filenames. A filename without
   a path is resolved under `tests/dragonfly/`. Leave empty to use the full
   `tests/dragonfly` suite.
@@ -20,7 +22,8 @@ The following names match the `workflow_dispatch` fields in the YAML exactly.
   node IDs. Leave empty to run all cases in the selected suites. The same regex
   applies to every suite in `test-suites`; it is not a separate filter per file.
 - `iterations`: A positive integer controlling how many times the selected pytest
-  tests run. It defaults to `1` when left empty.
+  tests run. It defaults to `1` when left empty. The run count and `max-run-time`
+  are both limits: whichever occurs first ends the test family.
 
 Examples:
 
@@ -84,26 +87,22 @@ case names from both suites. There is currently no per-suite filter syntax.
 
 ## GoogleTest Inputs
 
-Python and GoogleTest selection are independent. Set Python inputs to run Python,
-GoogleTest inputs to run GoogleTest, or both sets of inputs to run both. When every
-selection input is left at its default, both full suites run once. Both iteration
-fields visibly default to `1` in the workflow form. The two test steps are also
-independent after starting: a failure in one does not prevent the other from running.
-
-Python is selected by a non-empty `test-suites` or `test-cases` value, or by setting
-`iterations` to a value other than its default of `1`. GoogleTest is selected by a
-non-empty `gtest-suites` or `gtest-cases` value, or by setting `gtest-iterations` to
-a value other than its default of `1`. For example,
-setting `iterations` to `3` and `gtest-suites` to `dfly_core_test` runs the selected
-Python tests three times and `dfly_core_test` once by default.
+GoogleTests run only in a manually dispatched workflow. Every manual dispatch runs
+both the full Pytest and GoogleTest suites once by default. Scheduled regression jobs
+run Pytest only and never build or run GoogleTests. The GoogleTest fields refine a
+manual run; they do not enable it. A failure in one test family does not prevent the
+other family from running.
 
 - `gtest-suites`: Comma- or space-separated target names discovered under
   `src/core`, `src/facade`, and `src/server`. You may also provide a target path or
-  `.cc` suffix; only the target name is used.
+  `.cc` suffix; only the target name is used. Leave it empty to run every discovered
+  target once.
 - `gtest-cases`: A value passed directly to GoogleTest as `--gtest_filter`. Leave it
-  empty to run all cases in the selected targets.
+  empty to run all cases in the selected targets, or all cases in every target when
+  `gtest-suites` is also empty.
 - `gtest-iterations`: A positive integer controlling how many times the selected
-  GoogleTest targets run. It defaults to `1`.
+  GoogleTest targets run. It defaults to `1`. The run count and `max-run-time` are
+  both limits: whichever occurs first ends the test family.
 
 Example:
 
@@ -133,12 +132,34 @@ StringMapTest.*:DashTest.*
   GoogleTest. The helpers also share a deadline started before the build, so time
   used by the build or one test family reduces the time available to the other.
   Manual runs default to `360` minutes (6 hours); scheduled runs retain an 80-minute
-  shared job budget. A runner cannot exceed GitHub Actions' six-hour job limit.
+  shared job budget. A runner cannot exceed GitHub Actions' six-hour job limit. The
+  budget stops the active build or test command immediately when it expires; it does
+  not wait for the current iteration to finish. If all requested iterations complete
+  first, the job continues with the next test family or post-test steps.
 - `continue-on-test-failure`: A boolean that defaults to `false`. When `false`, the
   first failing iteration stops its own selected test family. Set it to `true` to
   complete every selected iteration in both Pytest and GoogleTest, then report a
   failure at the end. The two family steps are independent: a failure in one never
-  prevents the other from starting.
+  prevents the other from starting. With `true`, each completed Pytest iteration is
+  handled before the next begins. Every failed iteration archives all
+  `/tmp/dragonfly_logs/` contents as `/tmp/failed/iteration_<n>_logs.tar.zst` using
+  Zstandard level 5. Clean iterations are not archived or retained: their logs are
+  deleted. Archive creation finishes before the next iteration starts, and its
+  duration is printed in the job log.
+
+  The `logs` artifact contains failed-iteration archives at its root and a
+  `pytest-failures-by-iteration.txt` report listing the failed test cases for each
+  failed Pytest iteration. To inspect an archive after downloading the artifact,
+  run this repository helper from the directory containing the archive:
+
+  ```bash
+  bash .github/scripts/open-regression-iteration-logs.sh ITERATION
+  ```
+
+  For example, `bash .github/scripts/open-regression-iteration-logs.sh 3` extracts
+  `iteration_3_logs.tar.zst` to `iteration_3_logs/`. The helper requires one positive
+  iteration number, supports `--help`, and exits without overwriting an existing
+  extraction directory.
 
 `max-run-time`:
 
@@ -160,10 +181,11 @@ The boolean failure setting is also validated by GitHub because it is a typed
 workflow input.
 
 Scheduled runs do not provide manual inputs. They skip the manual-input validation
-step and use the 80-minute shared job budget described above. Manual runs use the
-longer `max-run-time` budget. The job-level timeout is the hard deadline for the
-build and both test families, so GitHub may cancel a command immediately when the
-budget expires before post-test uploads can run.
+step, run the full Pytest suite once, skip GoogleTests, and use the 80-minute shared
+job budget described above. Manual runs execute both test families and use the longer
+`max-run-time` budget. The job-level timeout is the hard deadline for the build and
+selected test families, so GitHub may cancel a command immediately when the budget
+expires before post-test uploads can run.
 
 Both workflows fan out over their configured build matrix. Targeted inputs reduce
 test execution time, but each matrix job still builds the configured Dragonfly

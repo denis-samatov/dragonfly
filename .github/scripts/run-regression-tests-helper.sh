@@ -29,6 +29,41 @@ PrintBudgetExhausted() {
   echo "Shared regression time budget of $1 minutes exhausted"
 }
 
+ArchiveAndCleanPytestLogs() {
+  local iteration=$1
+  local test_failed=$2
+  local junit_file=$3
+  local log_root=/tmp/dragonfly_logs
+
+  if [[ "${test_failed}" == true ]]; then
+    local archive_dir=/tmp/failed
+    local archive_path="${archive_dir}/iteration_${iteration}_logs.tar.zst"
+    local start_seconds=$SECONDS
+
+    mkdir -p "${archive_dir}"
+    if ! python3 "${GITHUB_WORKSPACE}/.github/scripts/write-pytest-failure-report.py" \
+      "${junit_file}" "${iteration}" "${archive_dir}/pytest-failures-by-iteration.txt"; then
+      echo "Failed to write Pytest failure report for iteration ${iteration}"
+      return 1
+    fi
+    if [[ ! -d "${log_root}" ]]; then
+      echo "No Pytest logs found for failed iteration ${iteration}"
+      return
+    fi
+    echo "Archiving Pytest logs from iteration ${iteration}: ${archive_path}"
+    if ! tar --use-compress-program='zstd -5 -T0' -cf "${archive_path}" -C /tmp dragonfly_logs; then
+      echo "Failed to archive Pytest logs from iteration ${iteration}"
+      return 1
+    fi
+    echo "Archived Pytest logs from iteration ${iteration} in $((SECONDS - start_seconds)) seconds"
+  elif [[ ! -d "${log_root}" ]]; then
+    return
+  fi
+
+  rm -rf "${log_root}"
+  echo "Removed Pytest logs from iteration ${iteration}"
+}
+
 ValidateInputs() {
   ITERATIONS_INPUT=${ITERATIONS_INPUT:-1}
 
@@ -188,11 +223,15 @@ RunPytests() {
     fi
 
     if [[ "${code}" -eq 0 ]]; then
+      if [[ "${CONTINUE_ON_TEST_FAILURE_INPUT}" == true ]]; then
+        ArchiveAndCleanPytestLogs "${iteration}" false "${junit_file}" || exit 1
+      fi
       continue
     fi
     if [[ "${code}" -eq 1 ]]; then
       pytest_failed=true
       if [[ "${CONTINUE_ON_TEST_FAILURE_INPUT}" == true ]]; then
+        ArchiveAndCleanPytestLogs "${iteration}" true "${junit_file}" || exit 1
         continue
       fi
     fi

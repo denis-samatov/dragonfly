@@ -7,7 +7,7 @@ on:
     inputs:
       # Pytest inputs.
       test-suites:
-        description: "Pytest: optional filenames; see .github/REGRESSION-TESTS.md. Example: connection_test,eval_test"
+        description: "Pytest: optional filenames; empty runs all Pytest suites once. See .github/REGRESSION-TESTS.md. Example: connection_test,eval_test"
         required: false
         default: ""
         type: string
@@ -17,14 +17,14 @@ on:
         default: ""
         type: string
       iterations:
-        description: "Pytest: optional run count; see .github/REGRESSION-TESTS.md. Default: 1. Example: 12"
+        description: "Pytest: optional run count; run count or Common time budget, whichever finishes first. See .github/REGRESSION-TESTS.md. Default: 1. Example: 12"
         required: false
         default: "1"
         type: string
 
       # GoogleTest inputs.
       gtest-suites:
-        description: "GoogleTest: optional targets; see .github/REGRESSION-TESTS.md. Example: dfly_core_test,redis_parser_test"
+        description: "GoogleTest: manual runs only; optional targets, empty runs every target once. See .github/REGRESSION-TESTS.md. Example: dfly_core_test,redis_parser_test"
         required: false
         default: ""
         type: string
@@ -34,19 +34,19 @@ on:
         default: ""
         type: string
       gtest-iterations:
-        description: "GoogleTest: optional run count; see .github/REGRESSION-TESTS.md. Default: 1. Example: 12"
+        description: "GoogleTest: optional run count; run count or Common time budget, whichever finishes first. See .github/REGRESSION-TESTS.md. Default: 1. Example: 12"
         required: false
         default: "1"
         type: string
 
       # Common inputs.
       max-run-time:
-        description: "Common: optional total job budget in minutes for build, Pytest, and GoogleTest; see .github/REGRESSION-TESTS.md. Default: 360 (6 hours)"
+        description: "Common: optional total job budget for build, Pytest, and GoogleTest; stops an active command when reached. See .github/REGRESSION-TESTS.md. Default: 360 min (6 hours)"
         required: false
         default: "360"
         type: string
       continue-on-test-failure:
-        description: "Common: failure handling for Pytest and GoogleTest; see .github/REGRESSION-TESTS.md. true completes iterations after failures"
+        description: "Common: failure handling for Pytest and GoogleTest; true completes iterations, archives failed Pytest logs, and deletes clean logs. See .github/REGRESSION-TESTS.md"
         required: false
         default: false
         type: boolean

@@ -64,7 +64,7 @@ inputs:
     required: false
     default: ""
     type: string
-    description: "Optional pytest filenames relative to tests/dragonfly; empty runs all suites"
+    description: "Optional pytest filenames relative to tests/dragonfly; empty runs all suites once"
   test-cases:
     required: false
     default: ""
@@ -79,17 +79,17 @@ inputs:
     required: false
     default: ""
     type: string
-    description: "Optional GoogleTest target names; empty runs all suites under src/core, src/facade, and src/server"
+    description: "Optional GoogleTest target names for manually dispatched workflows; empty runs all suites once"
   gtest-cases:
     required: false
     default: ""
     type: string
-    description: "Optional value forwarded to --gtest_filter; empty runs all GoogleTest cases"
+    description: "Optional value forwarded to --gtest_filter"
   gtest-iterations:
     required: false
     default: "1"
     type: string
-    description: "Optional number of times to run selected GoogleTest suites; defaults to 1 when GoogleTests run"
+    description: "Optional number of times to run selected GoogleTest suites; defaults to 1"
   max-run-time:
     required: false
     default: "360"
@@ -168,7 +168,7 @@ runs:
 
     - name: Run PyTests
       id: main
-      if: always() && (inputs.test-suites != '' || inputs.test-cases != '' || inputs.iterations != '1' || (inputs.gtest-suites == '' && inputs.gtest-cases == '' && inputs.gtest-iterations == '1'))
+      if: always()
       shell: bash
       run: "${GITHUB_WORKSPACE}/.github/scripts/run-regression-tests-helper.sh pytest"
       env:
@@ -193,7 +193,7 @@ runs:
         AZURE_STORAGE_CONNECTION_STRING: ${{ inputs.azure-storage-connection-string }}
 
     - name: Build and run GoogleTests
-      if: always() && (inputs.gtest-suites != '' || inputs.gtest-cases != '' || inputs.gtest-iterations != '1' || (inputs.test-suites == '' && inputs.test-cases == '' && inputs.iterations == '1'))
+      if: always() && github.event_name == 'workflow_dispatch'
       shell: bash
       run: "${GITHUB_WORKSPACE}/.github/scripts/run-regression-tests-helper.sh gtest"
       env:
