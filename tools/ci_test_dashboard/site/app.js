@@ -263,7 +263,7 @@ function renderDetails() {
   const detail = source ? state.detailCache.get(source.id) : null;
   const detailError = source ? state.detailErrors.get(source.id) : null;
   const needsDetail = Boolean(source?.detail_file && !detail && !detailError);
-  const test = source ? deriveRow(detail ? {...source, ...detail} : source) : null;
+  const test = source ? deriveRow(detailForSelectedRange(source, detail)) : null;
   if (!test) {
     pane.className = 'empty-state';
     pane.textContent = 'Select a test row.';
@@ -336,6 +336,42 @@ async function loadTestDetail(test) {
   }
   const detail = await fetchJson(`data/${test.detail_file}`);
   state.detailCache.set(test.id, detail);
+}
+
+function detailForSelectedRange(source, detail) {
+  if (!detail) {
+    return source;
+  }
+
+  const activeDates = activeDateSet(source);
+  const segments = Array.isArray(detail.segments) ?
+      detail.segments.filter((segment) => inActiveDateSet(activeDates, segment.date)) :
+      [];
+  const failureExamples = Array.isArray(detail.failure_examples) ?
+      detail.failure_examples.filter(
+          (example) => inActiveDateSet(activeDates, datePart(example.time))) :
+      [];
+
+  return {
+    ...source,
+    ...detail,
+    segments,
+    failure_examples: failureExamples,
+  };
+}
+
+function activeDateSet(source) {
+  const dates = source.active_dates ?? source.filters?.dates ?? state.data?.date_range?.days ?? [];
+  return new Set(dates.filter(Boolean));
+}
+
+function inActiveDateSet(activeDates, date) {
+  return activeDates.size === 0 || activeDates.has(date);
+}
+
+function datePart(value) {
+  const match = String(value ?? '').match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : '';
 }
 
 function chips(label, values) {

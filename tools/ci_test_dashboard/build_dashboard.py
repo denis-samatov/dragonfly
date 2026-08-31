@@ -903,10 +903,18 @@ def metadata_for_dashboard_record(meta: Metadata, item: dict[str, Any]) -> Metad
         attempt=str(item.get("run_attempt") or meta.attempt),
         job=str(item.get("job") or meta.job),
         variant=str(item.get("variant") or meta.variant),
-        group=str(item.get("group") or item.get("binary") or meta.group),
+        group=dashboard_record_group(meta, item),
         report_name=source or meta.report_name,
         relative_path=relative_path,
     )
+
+
+def dashboard_record_group(meta: Metadata, item: dict[str, Any]) -> str:
+    group = str(item.get("group") or "")
+    binary = str(item.get("binary") or "")
+    if group and binary:
+        return f"{group}/{binary}"
+    return group or binary or meta.group
 
 
 def normalize_status(value: Any) -> str:
@@ -1005,6 +1013,10 @@ def message_from(element: ET.Element) -> str:
 
 
 def make_test_id(meta: Metadata, classname: str, name: str) -> str:
+    if meta.level == "gtest":
+        source = meta.group or meta.report_name
+        if source:
+            return f"{meta.suite}/{meta.level}/{source}/{classname}::{name}"
     return f"{meta.suite}/{meta.level}/{classname}::{name}"
 
 
